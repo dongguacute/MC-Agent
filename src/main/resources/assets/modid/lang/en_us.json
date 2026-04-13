@@ -1,0 +1,4 @@
+{
+  "command.modid.agent.record.success": "Recorded: bot_name=%s, tag=%s",
+  "command.modid.agent.record.error": "Failed to write local data file: %s"
+}

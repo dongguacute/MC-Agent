@@ -1,0 +1,4 @@
+{
+  "command.modid.agent.record.success": "已记录: bot_name=%s, tag=%s",
+  "command.modid.agent.record.error": "写入本地 data 文件失败: %s"
+}

@@ -50,12 +50,14 @@ public class Recordbot {
             );
 
             context.getSource().sendSuccess(
-                    () -> Component.literal("已记录: bot_name=" + botName + ", tag=" + tag),
+                    () -> Component.translatable("command.modid.agent.record.success", botName, tag),
                     false
             );
             return 1;
         } catch (IOException e) {
-            context.getSource().sendFailure(Component.literal("写入本地 data 文件失败: " + e.getMessage()));
+            context.getSource().sendFailure(
+                    Component.translatable("command.modid.agent.record.error", String.valueOf(e.getMessage()))
+            );
             return 0;
         }
     }
