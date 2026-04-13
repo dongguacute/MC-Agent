@@ -2,6 +2,7 @@ package com.mcagents.input;
 
 import com.mcagents.MCAgentsMod;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.network.chat.Component;
@@ -89,7 +90,7 @@ public class Agent {
         player.sendSystemMessage(Component.literal("正在请求 AI..."));
 
         CompletableFuture
-                .supplyAsync(() -> callOpenAICompatibleApi(safePrompt, currentConfig), HTTP_EXECUTOR)
+                .supplyAsync(() -> callOpenAICompatibleApi(player, safePrompt, currentConfig), HTTP_EXECUTOR)
                 .thenAccept(reply -> sendToMainThread(
                         player,
                         Component.literal(AGENT_DISPLAY_NAME + ": " + reply)
@@ -105,18 +106,80 @@ public class Agent {
                 });
     }
 
-    private static String callOpenAICompatibleApi(String prompt, AgentConfig currentConfig) {
+    private static String callOpenAICompatibleApi(ServerPlayer player, String prompt, AgentConfig currentConfig) {
         try {
-            JsonObject requestBody = new JsonObject();
-            requestBody.addProperty("model", currentConfig.model());
+            return callOpenAICompatibleApiStreaming(player, prompt, currentConfig);
+        } catch (AgentUserException streamError) {
+            if (!streamError.message.contains("HTTP 状态码 400")) {
+                throw streamError;
+            }
+            return callOpenAICompatibleApiFallback(prompt, currentConfig);
+        }
+    }
 
-            JsonArray messages = new JsonArray();
-            JsonObject userMessage = new JsonObject();
-            userMessage.addProperty("role", "user");
-            userMessage.addProperty("content", prompt);
-            messages.add(userMessage);
-            requestBody.add("messages", messages);
+    private static String callOpenAICompatibleApiStreaming(ServerPlayer player, String prompt, AgentConfig currentConfig) {
+        try {
+            JsonObject requestBody = buildRequestBody(prompt, currentConfig.model(), true);
 
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(currentConfig.apiUrl()))
+                    .timeout(Duration.ofSeconds(60))
+                    .header("Authorization", "Bearer " + currentConfig.apiKey())
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString(), StandardCharsets.UTF_8))
+                    .build();
+
+            HttpResponse<java.util.stream.Stream<String>> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofLines());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new AgentUserException("AI 请求失败：HTTP 状态码 " + response.statusCode());
+            }
+
+            StreamState streamState = new StreamState(player);
+            StringBuilder eventData = new StringBuilder();
+
+            try (java.util.stream.Stream<String> lines = response.body()) {
+                java.util.Iterator<String> iterator = lines.iterator();
+                while (iterator.hasNext()) {
+                    String line = iterator.next();
+                    if (line == null) {
+                        continue;
+                    }
+
+                    String trimmed = line.trim();
+                    if (trimmed.isEmpty()) {
+                        if (consumeEventData(eventData, streamState)) {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if (trimmed.startsWith("data:")) {
+                        if (eventData.length() > 0) {
+                            eventData.append('\n');
+                        }
+                        eventData.append(trimmed.substring(5).trim());
+                    }
+                }
+            }
+
+            consumeEventData(eventData, streamState);
+            streamState.flushPending(true);
+            String finalAnswer = streamState.answerText.toString().trim();
+            if (finalAnswer.isEmpty()) {
+                throw new AgentUserException("AI 响应为空");
+            }
+            return finalAnswer;
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new AgentUserException("AI 网络请求失败：" + (e.getMessage() == null ? "" : e.getMessage()));
+        }
+    }
+
+    private static String callOpenAICompatibleApiFallback(String prompt, AgentConfig currentConfig) {
+        try {
+            JsonObject requestBody = buildRequestBody(prompt, currentConfig.model(), false);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(currentConfig.apiUrl()))
                     .timeout(Duration.ofSeconds(60))
@@ -138,17 +201,122 @@ public class Agent {
 
             JsonObject firstChoice = choices.get(0).getAsJsonObject();
             JsonObject message = firstChoice.getAsJsonObject("message");
-            if (message == null || !message.has("content")) {
-                throw new AgentUserException("AI 响应格式错误：缺少 message.content 字段");
+            if (message == null) {
+                throw new AgentUserException("AI 响应格式错误：缺少 message 字段");
             }
 
-            return message.get("content").getAsString().trim();
+            String content = extractText(message.get("content")).trim();
+            if (content.isEmpty()) {
+                throw new AgentUserException("AI 响应为空");
+            }
+            return content;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
             throw new AgentUserException("AI 网络请求失败：" + (e.getMessage() == null ? "" : e.getMessage()));
         }
+    }
+
+    private static JsonObject buildRequestBody(String prompt, String model, boolean stream) {
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("model", model);
+        requestBody.addProperty("stream", stream);
+
+        JsonArray messages = new JsonArray();
+        JsonObject userMessage = new JsonObject();
+        userMessage.addProperty("role", "user");
+        userMessage.addProperty("content", prompt);
+        messages.add(userMessage);
+        requestBody.add("messages", messages);
+        return requestBody;
+    }
+
+    private static boolean consumeEventData(StringBuilder eventData, StreamState streamState) {
+        if (eventData.length() == 0) {
+            return false;
+        }
+        String payload = eventData.toString().trim();
+        eventData.setLength(0);
+
+        if (payload.isEmpty()) {
+            return false;
+        }
+        if ("[DONE]".equals(payload)) {
+            return true;
+        }
+
+        try {
+            JsonObject chunk = JsonParser.parseString(payload).getAsJsonObject();
+            JsonArray choices = chunk.getAsJsonArray("choices");
+            if (choices == null || choices.isEmpty()) {
+                return false;
+            }
+
+            JsonObject firstChoice = choices.get(0).getAsJsonObject();
+            JsonObject delta = firstChoice.has("delta") ? firstChoice.getAsJsonObject("delta") : null;
+            JsonObject message = firstChoice.has("message") ? firstChoice.getAsJsonObject("message") : null;
+
+            if (delta != null) {
+                appendChunk(streamState, delta);
+            } else if (message != null) {
+                appendChunk(streamState, message);
+            }
+            return false;
+        } catch (Exception e) {
+            // 忽略无法解析的片段，继续处理后续流。
+            return false;
+        }
+    }
+
+    private static void appendChunk(StreamState streamState, JsonObject source) {
+        String reasoningText = extractText(source.get("reasoning_content"))
+                + extractText(source.get("reasoning"))
+                + extractText(source.get("thinking"));
+        String answerText = extractText(source.get("content"));
+
+        if (!reasoningText.isEmpty()) {
+            streamState.thinkingPending.append(reasoningText);
+            streamState.thinkingText.append(reasoningText);
+        }
+        if (!answerText.isEmpty()) {
+            streamState.answerPending.append(answerText);
+            streamState.answerText.append(answerText);
+        }
+
+        streamState.flushPending(false);
+    }
+
+    private static String extractText(JsonElement element) {
+        if (element == null || element.isJsonNull()) {
+            return "";
+        }
+        if (element.isJsonPrimitive()) {
+            return element.getAsString();
+        }
+        if (element.isJsonArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonElement item : element.getAsJsonArray()) {
+                sb.append(extractText(item));
+            }
+            return sb.toString();
+        }
+        if (element.isJsonObject()) {
+            JsonObject obj = element.getAsJsonObject();
+            if (obj.has("text")) {
+                return extractText(obj.get("text"));
+            }
+            if (obj.has("content")) {
+                return extractText(obj.get("content"));
+            }
+            if (obj.has("reasoning_content")) {
+                return extractText(obj.get("reasoning_content"));
+            }
+            if (obj.has("reasoning")) {
+                return extractText(obj.get("reasoning"));
+            }
+        }
+        return "";
     }
 
     private static void sendToMainThread(ServerPlayer player, Component msg) {
@@ -277,6 +445,43 @@ public class Agent {
         private AgentUserException(String message) {
             super(message);
             this.message = message;
+        }
+    }
+
+    private static class StreamState {
+        private static final int FLUSH_SIZE = 36;
+        private static final long FLUSH_INTERVAL_MS = 800;
+
+        private final ServerPlayer player;
+        private final StringBuilder thinkingText = new StringBuilder();
+        private final StringBuilder answerText = new StringBuilder();
+        private final StringBuilder thinkingPending = new StringBuilder();
+        private final StringBuilder answerPending = new StringBuilder();
+        private long lastFlushAt = System.currentTimeMillis();
+
+        private StreamState(ServerPlayer player) {
+            this.player = player;
+        }
+
+        private void flushPending(boolean force) {
+            long now = System.currentTimeMillis();
+            boolean shouldFlush = force
+                    || thinkingPending.length() >= FLUSH_SIZE
+                    || answerPending.length() >= FLUSH_SIZE
+                    || (now - lastFlushAt) >= FLUSH_INTERVAL_MS;
+            if (!shouldFlush) {
+                return;
+            }
+
+            if (thinkingPending.length() > 0) {
+                sendToMainThread(player, Component.literal(AGENT_DISPLAY_NAME + "[思考]: " + thinkingPending));
+                thinkingPending.setLength(0);
+            }
+            if (answerPending.length() > 0) {
+                sendToMainThread(player, Component.literal(AGENT_DISPLAY_NAME + "[输出中]: " + answerPending));
+                answerPending.setLength(0);
+            }
+            lastFlushAt = now;
         }
     }
 
