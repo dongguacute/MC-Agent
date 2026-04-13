@@ -43,15 +43,7 @@ public class Agent {
     private static final String AGENT_DISPLAY_NAME = "MCAGENT";
     private static final String DATA_DIR_NAME = "macagent";
     private static final String CONFIG_FILE_NAME = "macagent.txt";
-    private static final String CONTROL_BOT_SYSTEM_PROMPT = """
-            你是 Minecraft 服务器助手。
-            当且仅当用户明确要求控制假人上下线时，使用以下单行格式输出：
-            [CONTROL_BOT] join <bot_name_or_tag>
-            [CONTROL_BOT] leave <bot_name_or_tag>
-            如果用户按分类/tag下达指令，优先输出 tag；系统会先读取记录库，再按 tag 命中的 bot_name 逐个执行。
-            当 tag 含空格时必须加双引号，例如：[CONTROL_BOT] join "建造 助手"
-            若用户请求与假人上下线无关，不要输出 CONTROL_BOT 指令。
-            """;
+    private static final String CONTROL_BOT_PROMPT_RELATIVE_PATH = "src/main/java/com/mcagents/prompt/ControlBot.md";
     private static final String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
     private static final String OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -83,6 +75,7 @@ public class Agent {
             .build();
 
     private static volatile AgentConfig config = new AgentConfig(DEFAULT_API_URL, "", DEFAULT_MODEL, DEFAULT_MAX_CONTEXT_TOKENS);
+    private static volatile String controlBotSystemPrompt = "";
     private static final Map<UUID, ConversationState> CONVERSATIONS = new ConcurrentHashMap<>();
 
     public static void initializeConfig(MinecraftServer server) {
@@ -100,6 +93,7 @@ public class Agent {
     public static void reloadConfig(MinecraftServer server) throws IOException {
         Path configFile = getConfigFile(server);
         ensureConfigFileExists(server);
+        controlBotSystemPrompt = loadControlBotPrompt(server);
 
         String content = Files.readString(configFile, StandardCharsets.UTF_8);
         Map<String, String> values = parseKeyValueConfig(content);
@@ -486,6 +480,31 @@ public class Agent {
         return Math.max(1, (int) Math.ceil(tokenUnits));
     }
 
+    private static String getControlBotSystemPrompt() {
+        return controlBotSystemPrompt == null ? "" : controlBotSystemPrompt;
+    }
+
+    private static String loadControlBotPrompt(MinecraftServer server) throws IOException {
+        Path serverRoot = getServerRootDirectory(server);
+        Path parent = serverRoot.getParent();
+        Path grandParent = parent != null ? parent.getParent() : null;
+        Path[] candidates = new Path[]{
+                serverRoot.resolve(CONTROL_BOT_PROMPT_RELATIVE_PATH),
+                parent != null ? parent.resolve(CONTROL_BOT_PROMPT_RELATIVE_PATH) : null,
+                grandParent != null ? grandParent.resolve(CONTROL_BOT_PROMPT_RELATIVE_PATH) : null
+        };
+        for (Path candidate : candidates) {
+            if (candidate == null || !Files.exists(candidate)) {
+                continue;
+            }
+            String loaded = Files.readString(candidate, StandardCharsets.UTF_8).trim();
+            if (!loaded.isBlank()) {
+                return loaded;
+            }
+        }
+        throw new IOException("无法加载 ControlBot 提示词文件: " + CONTROL_BOT_PROMPT_RELATIVE_PATH);
+    }
+
     private static String buildProgressBar(int usedTokens, int totalTokens, int width) {
         if (totalTokens <= 0 || width <= 0) {
             return "[unknown]";
@@ -515,8 +534,9 @@ public class Agent {
         }
         String sanitized = reply.replace("\r\n", "\n").trim();
         sanitized = CONTROL_DIRECTIVE_LINE_PATTERN.matcher(sanitized).replaceAll("").trim();
-        if (!CONTROL_BOT_SYSTEM_PROMPT.isBlank()) {
-            sanitized = sanitized.replace(CONTROL_BOT_SYSTEM_PROMPT.trim(), "").trim();
+        String systemPrompt = getControlBotSystemPrompt();
+        if (!systemPrompt.isBlank()) {
+            sanitized = sanitized.replace(systemPrompt.trim(), "").trim();
         }
         return sanitized;
     }
@@ -530,8 +550,9 @@ public class Agent {
             return "";
         }
         sanitized = CONTROL_DIRECTIVE_LINE_PATTERN.matcher(sanitized).replaceAll("").trim();
-        if (!CONTROL_BOT_SYSTEM_PROMPT.isBlank()) {
-            sanitized = sanitized.replace(CONTROL_BOT_SYSTEM_PROMPT.trim(), "").trim();
+        String systemPrompt = getControlBotSystemPrompt();
+        if (!systemPrompt.isBlank()) {
+            sanitized = sanitized.replace(systemPrompt.trim(), "").trim();
         }
         if (PROMPT_LEAK_PATTERN.matcher(sanitized).find()) {
             return "";
@@ -1007,7 +1028,7 @@ public class Agent {
                 JsonArray payloadMessages = new JsonArray();
                 JsonObject systemMessage = new JsonObject();
                 systemMessage.addProperty("role", "system");
-                systemMessage.addProperty("content", CONTROL_BOT_SYSTEM_PROMPT);
+                systemMessage.addProperty("content", getControlBotSystemPrompt());
                 payloadMessages.add(systemMessage);
                 for (ChatMessage message : messages) {
                     JsonObject item = new JsonObject();
@@ -1021,7 +1042,7 @@ public class Agent {
                 payloadMessages.add(currentPrompt);
                 return new ConversationPrepareResult(true, payloadMessages, version, null);
             }
-            int systemTokens = estimateTokens(CONTROL_BOT_SYSTEM_PROMPT) + MESSAGE_OVERHEAD_TOKENS;
+            int systemTokens = estimateTokens(getControlBotSystemPrompt()) + MESSAGE_OVERHEAD_TOKENS;
             if (systemTokens >= maxContextTokens || usedTokens + systemTokens >= maxContextTokens) {
                 return new ConversationPrepareResult(
                         false,
@@ -1055,7 +1076,7 @@ public class Agent {
             JsonArray payloadMessages = new JsonArray();
             JsonObject systemMessage = new JsonObject();
             systemMessage.addProperty("role", "system");
-            systemMessage.addProperty("content", CONTROL_BOT_SYSTEM_PROMPT);
+            systemMessage.addProperty("content", getControlBotSystemPrompt());
             payloadMessages.add(systemMessage);
             for (ChatMessage message : messages) {
                 JsonObject item = new JsonObject();
@@ -1078,7 +1099,7 @@ public class Agent {
                 }
                 return new ContextStatus(-1, false);
             }
-            int systemTokens = estimateTokens(CONTROL_BOT_SYSTEM_PROMPT) + MESSAGE_OVERHEAD_TOKENS;
+            int systemTokens = estimateTokens(getControlBotSystemPrompt()) + MESSAGE_OVERHEAD_TOKENS;
             if (version != expectedVersion) {
                 int remainingTokens = Math.max(0, maxContextTokens - systemTokens - usedTokens);
                 return new ContextStatus(remainingTokens, remainingTokens <= 0);
