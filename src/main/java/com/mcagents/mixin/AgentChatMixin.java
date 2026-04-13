@@ -25,7 +25,7 @@ public class AgentChatMixin {
 
         String prompt = chatMessage.substring("#agent".length()).trim();
         if (prompt.isEmpty()) {
-            player.sendSystemMessage(Component.literal("格式错误：请使用 #agent 你的提示词"));
+            player.sendSystemMessage(Component.translatable("command.modid.agent.chat.prompt.empty"));
             ci.cancel();
             return;
         }

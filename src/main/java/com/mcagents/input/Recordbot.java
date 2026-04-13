@@ -68,13 +68,13 @@ public class Recordbot {
             );
 
             context.getSource().sendSuccess(
-                    () -> Component.literal("已记录: bot_name=" + botName + ", tag=" + tag),
+                    () -> Component.translatable("command.modid.agent.record.success", botName, tag),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.literal("写入本地 data 文件失败: " + e.getMessage())
+                    Component.translatable("command.modid.agent.record.error", e.getMessage())
             );
             return 0;
         }
@@ -86,14 +86,14 @@ public class Recordbot {
 
             if (records.isEmpty()) {
                 context.getSource().sendSuccess(
-                        () -> Component.literal("当前没有已记录的 bot。"),
+                        () -> Component.translatable("command.modid.agent.botlist.empty"),
                         false
                 );
                 return 1;
             }
 
             context.getSource().sendSuccess(
-                    () -> Component.literal("已记录的 bot 列表："),
+                    () -> Component.translatable("command.modid.agent.botlist.header"),
                     false
             );
 
@@ -107,14 +107,14 @@ public class Recordbot {
                 String tag = record.has("tag") ? record.get("tag").getAsString() : "unknown";
 
                 context.getSource().sendSuccess(
-                        () -> Component.literal("- bot_name: " + botName + ", tag: " + tag),
+                        () -> Component.translatable("command.modid.agent.botlist.item", botName, tag),
                         false
                 );
             }
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.literal("读取 bot 列表失败: " + e.getMessage())
+                    Component.translatable("command.modid.agent.botlist.error", e.getMessage())
             );
             return 0;
         }
@@ -141,13 +141,13 @@ public class Recordbot {
         try {
             Agent.reloadConfig(context.getSource().getServer());
             context.getSource().sendSuccess(
-                    () -> Component.literal("Agent 配置已重载"),
+                    () -> Component.translatable("command.modid.agent.reload.success"),
                     true
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.literal("重载 Agent 配置失败: " + e.getMessage())
+                    Component.translatable("command.modid.agent.reload.error", e.getMessage())
             );
             return 0;
         }

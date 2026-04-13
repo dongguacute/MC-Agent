@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
@@ -97,18 +98,18 @@ public class Agent {
 
     public static void handleAgentPrompt(ServerPlayer player, String prompt) {
         if (prompt == null || prompt.trim().isEmpty()) {
-            player.sendSystemMessage(Component.literal("请输入提示词，例如：#agent 帮我总结今天任务").withStyle(ChatFormatting.YELLOW));
+            player.sendSystemMessage(Component.translatable("command.modid.agent.chat.prompt.empty").withStyle(ChatFormatting.YELLOW));
             return;
         }
 
         AgentConfig currentConfig = config;
         if (currentConfig.apiKey().isBlank()) {
-            player.sendSystemMessage(Component.literal("未配置 API Key，请编辑 " + CONFIG_FILE_NAME + " 中的 api_key").withStyle(ChatFormatting.RED));
+            player.sendSystemMessage(Component.translatable("command.modid.agent.chat.api_key.missing", CONFIG_FILE_NAME).withStyle(ChatFormatting.RED));
             return;
         }
 
         String safePrompt = prompt.trim();
-        player.sendSystemMessage(Component.literal("正在请求 AI...").withStyle(ChatFormatting.GRAY));
+        player.sendSystemMessage(Component.translatable("command.modid.agent.chat.requesting").withStyle(ChatFormatting.GRAY));
 
         CompletableFuture
                 .supplyAsync(() -> callOpenAICompatibleApi(player, safePrompt, currentConfig), HTTP_EXECUTOR)
@@ -116,9 +117,9 @@ public class Agent {
                 .exceptionally(ex -> {
                     Throwable root = unwrap(ex);
                     if (root instanceof AgentUserException agentError) {
-                        sendToMainThread(player, Component.literal(agentError.message).withStyle(ChatFormatting.RED));
+                        sendToMainThread(player, agentError.toComponent().withStyle(ChatFormatting.RED));
                     } else {
-                        sendToMainThread(player, Component.literal("AI 请求失败：未知错误").withStyle(ChatFormatting.RED));
+                        sendToMainThread(player, Component.translatable("command.modid.agent.chat.request.failed.unknown").withStyle(ChatFormatting.RED));
                     }
                     return null;
                 });
@@ -127,7 +128,7 @@ public class Agent {
     private static void handleAiReply(ServerPlayer player, String reply) {
         sendToMainThread(
                 player,
-                Component.literal(AGENT_DISPLAY_NAME + ": " + reply).withStyle(ChatFormatting.AQUA)
+                Component.translatable("command.modid.agent.chat.reply", AGENT_DISPLAY_NAME, reply).withStyle(ChatFormatting.AQUA)
         );
         MinecraftServer server = player.getServer();
         if (server == null) {
@@ -140,7 +141,7 @@ public class Agent {
         try {
             return callOpenAICompatibleApiStreaming(player, prompt, currentConfig);
         } catch (AgentUserException streamError) {
-            if (!streamError.message.contains("HTTP 状态码 400")) {
+            if (!streamError.isHttpStatusCode(400)) {
                 throw streamError;
             }
             return callOpenAICompatibleApiFallback(prompt, currentConfig);
@@ -161,7 +162,7 @@ public class Agent {
 
             HttpResponse<java.util.stream.Stream<String>> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofLines());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new AgentUserException("AI 请求失败：HTTP 状态码 " + response.statusCode());
+                throw AgentUserException.httpStatus(response.statusCode());
             }
 
             StreamState streamState = new StreamState(player);
@@ -196,14 +197,14 @@ public class Agent {
             streamState.flushPending(true);
             String finalAnswer = streamState.answerText.toString().trim();
             if (finalAnswer.isEmpty()) {
-                throw new AgentUserException("AI 响应为空");
+                throw new AgentUserException("command.modid.agent.chat.request.failed.empty");
             }
             return finalAnswer;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new AgentUserException("AI 网络请求失败：" + (e.getMessage() == null ? "" : e.getMessage()));
+            throw new AgentUserException("command.modid.agent.chat.request.failed.network", e.getMessage() == null ? "" : e.getMessage());
         }
     }
 
@@ -220,31 +221,31 @@ public class Agent {
 
             HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new AgentUserException("AI 请求失败：HTTP 状态码 " + response.statusCode());
+                throw AgentUserException.httpStatus(response.statusCode());
             }
 
             JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
             JsonArray choices = result.getAsJsonArray("choices");
             if (choices == null || choices.isEmpty()) {
-                throw new AgentUserException("AI 响应格式错误：缺少 choices 字段");
+                throw new AgentUserException("command.modid.agent.chat.request.failed.invalid_choices");
             }
 
             JsonObject firstChoice = choices.get(0).getAsJsonObject();
             JsonObject message = firstChoice.getAsJsonObject("message");
             if (message == null) {
-                throw new AgentUserException("AI 响应格式错误：缺少 message 字段");
+                throw new AgentUserException("command.modid.agent.chat.request.failed.invalid_message");
             }
 
             String content = extractText(message.get("content")).trim();
             if (content.isEmpty()) {
-                throw new AgentUserException("AI 响应为空");
+                throw new AgentUserException("command.modid.agent.chat.request.failed.empty");
             }
             return content;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new AgentUserException("AI 网络请求失败：" + (e.getMessage() == null ? "" : e.getMessage()));
+            throw new AgentUserException("command.modid.agent.chat.request.failed.network", e.getMessage() == null ? "" : e.getMessage());
         }
     }
 
@@ -474,11 +475,31 @@ public class Agent {
     }
 
     private static class AgentUserException extends RuntimeException {
-        private final String message;
+        private final String translationKey;
+        private final Object[] args;
+        private final Integer httpStatusCode;
 
-        private AgentUserException(String message) {
-            super(message);
-            this.message = message;
+        private AgentUserException(String translationKey, Integer httpStatusCode, Object... args) {
+            super(translationKey);
+            this.translationKey = translationKey;
+            this.args = args;
+            this.httpStatusCode = httpStatusCode;
+        }
+
+        private AgentUserException(String translationKey, Object... args) {
+            this(translationKey, null, args);
+        }
+
+        private static AgentUserException httpStatus(int statusCode) {
+            return new AgentUserException("command.modid.agent.chat.request.failed.http", statusCode, statusCode);
+        }
+
+        private boolean isHttpStatusCode(int statusCode) {
+            return httpStatusCode != null && httpStatusCode == statusCode;
+        }
+
+        private MutableComponent toComponent() {
+            return Component.translatable(translationKey, args);
         }
     }
 
@@ -509,7 +530,7 @@ public class Agent {
             if (thinkingPending.length() > 0) {
                 sendToMainThread(
                         player,
-                        Component.literal(AGENT_DISPLAY_NAME + "[思考]: " + thinkingPending).withStyle(ChatFormatting.DARK_GRAY)
+                        Component.translatable("command.modid.agent.chat.thinking", AGENT_DISPLAY_NAME, thinkingPending.toString()).withStyle(ChatFormatting.DARK_GRAY)
                 );
                 thinkingPending.setLength(0);
             }

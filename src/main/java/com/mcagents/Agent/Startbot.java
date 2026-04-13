@@ -67,7 +67,7 @@ public class Startbot {
         } else if ("leave".equalsIgnoreCase(action)) {
             subCommand = "kill";
         } else {
-            source.sendFailure(Component.literal("未知操作，仅支持 join / leave"));
+            source.sendFailure(Component.translatable("command.modid.agent.control.action.invalid"));
             return 0;
         }
 
@@ -93,17 +93,17 @@ public class Startbot {
                 }
             } catch (CommandSyntaxException e) {
                 failedBots.add(botName);
-                source.sendFailure(Component.literal("Carpet 命令语法/上下文错误: /" + carpetCommand + "，" + e.getMessage()));
+                source.sendFailure(Component.translatable("command.modid.agent.control.command.syntax_error", carpetCommand, e.getMessage()));
             } catch (Exception e) {
                 failedBots.add(botName);
-                source.sendFailure(Component.literal("执行 Carpet 命令失败: /" + carpetCommand + "，" + e.getMessage()));
+                source.sendFailure(Component.translatable("command.modid.agent.control.command.failed", carpetCommand, e.getMessage()));
             }
         }
 
         int finalSuccessCount = successCount;
-        source.sendSuccess(() -> Component.literal("批量执行完成：成功 " + finalSuccessCount + " 个，失败 " + failedBots.size() + " 个"), true);
+        source.sendSuccess(() -> Component.translatable("command.modid.agent.control.batch.result", finalSuccessCount, failedBots.size()), true);
         if (!failedBots.isEmpty()) {
-            source.sendFailure(Component.literal("失败 bot: " + String.join(", ", failedBots)));
+            source.sendFailure(Component.translatable("command.modid.agent.control.batch.failed_bots", String.join(", ", failedBots)));
         }
         return successCount > 0 ? 1 : 0;
     }
@@ -114,7 +114,7 @@ public class Startbot {
 
     private static List<String> resolveBotTargets(CommandSourceStack source, String input) {
         if (input == null || input.isBlank()) {
-            source.sendFailure(Component.literal("请输入 bot 名称或已记录的 tag"));
+            source.sendFailure(Component.translatable("command.modid.agent.control.target.empty"));
             return null;
         }
 
@@ -123,7 +123,7 @@ public class Startbot {
         try {
             recordFile = getRecordFile(source.getServer());
             JsonArray records = readRecords(recordFile);
-            source.sendSuccess(() -> Component.literal("已读取存储库: " + recordFile.toAbsolutePath() + "，记录数 " + records.size()), false);
+            source.sendSuccess(() -> Component.translatable("command.modid.agent.control.records.loaded", recordFile.toAbsolutePath().toString(), records.size()), false);
             for (JsonElement element : records) {
                 if (!element.isJsonObject()) {
                     continue;
@@ -142,12 +142,12 @@ public class Startbot {
                 }
             }
         } catch (IOException e) {
-            source.sendFailure(Component.literal("读取存储库失败: " + e.getMessage()));
+            source.sendFailure(Component.translatable("command.modid.agent.control.records.load_failed", e.getMessage()));
             return null;
         }
 
         if (!matchedBots.isEmpty()) {
-            source.sendSuccess(() -> Component.literal("tag 命中 bot: " + String.join(", ", matchedBots)), false);
+            source.sendSuccess(() -> Component.translatable("command.modid.agent.control.tag.matched", String.join(", ", matchedBots)), false);
             return matchedBots;
         }
 
@@ -157,7 +157,7 @@ public class Startbot {
             return single;
         }
 
-        source.sendFailure(Component.literal("未找到该 tag 对应的 bot，且输入也不是合法 bot_name（3-16 位字母/数字/下划线）"));
+        source.sendFailure(Component.translatable("command.modid.agent.control.target.not_found_or_invalid"));
         return null;
     }
 
@@ -226,7 +226,7 @@ public class Startbot {
             String tpCommand = "execute in " + dimension + " run tp " + botName + " " + x + " " + y + " " + z + " " + yaw + " " + pitch;
             server.getCommands().getDispatcher().execute(tpCommand, source.withPermission(4));
         } catch (Exception e) {
-            source.sendFailure(Component.literal("已上线但恢复原位置失败: " + botName + "，" + e.getMessage()));
+            source.sendFailure(Component.translatable("command.modid.agent.control.restore.failed", botName, e.getMessage()));
         }
     }
 
