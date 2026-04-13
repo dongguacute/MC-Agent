@@ -9,10 +9,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,10 +22,6 @@ import java.nio.file.StandardOpenOption;
 
 public class Recordbot {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path DATA_FILE = FabricLoader.getInstance()
-            .getGameDir()
-            .resolve("data")
-            .resolve("agent_records.json");
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -45,12 +42,13 @@ public class Recordbot {
         String tag = StringArgumentType.getString(context, "tag");
 
         try {
-            Path parent = DATA_FILE.getParent();
+            Path dataFile = getDataFile(context.getSource().getServer());
+            Path parent = dataFile.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
 
-            JsonArray records = readRecords();
+            JsonArray records = readRecords(dataFile);
 
             JsonObject record = new JsonObject();
             record.addProperty("bot_name", botName);
@@ -58,7 +56,7 @@ public class Recordbot {
             records.add(record);
 
             Files.writeString(
-                    DATA_FILE,
+                    dataFile,
                     GSON.toJson(records),
                     StandardOpenOption.CREATE,
                     StandardOpenOption.TRUNCATE_EXISTING
@@ -79,7 +77,7 @@ public class Recordbot {
 
     private static int handleBotListCommand(CommandContext<CommandSourceStack> context) {
         try {
-            JsonArray records = readRecords();
+            JsonArray records = readRecords(getDataFile(context.getSource().getServer()));
 
             if (records.isEmpty()) {
                 context.getSource().sendSuccess(
@@ -117,12 +115,12 @@ public class Recordbot {
         }
     }
 
-    private static JsonArray readRecords() throws IOException {
-        if (!Files.exists(DATA_FILE)) {
+    private static JsonArray readRecords(Path dataFile) throws IOException {
+        if (!Files.exists(dataFile)) {
             return new JsonArray();
         }
 
-        String content = Files.readString(DATA_FILE).trim();
+        String content = Files.readString(dataFile).trim();
         if (content.isEmpty()) {
             return new JsonArray();
         }
@@ -132,5 +130,11 @@ public class Recordbot {
         } catch (Exception ignored) {
             return new JsonArray();
         }
+    }
+
+    private static Path getDataFile(MinecraftServer server) {
+        return server.getWorldPath(LevelResource.ROOT)
+                .resolve("data")
+                .resolve("agent_records.json");
     }
 }
