@@ -16,7 +16,7 @@ repositories {
 
 loom {
 	mods {
-		"modid" {
+		"mc-agents" {
 			sourceSet sourceSets.main
 		}
 	}
