@@ -18,9 +18,11 @@ import net.minecraft.world.level.storage.LevelResource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 
 public class Recordbot {
+    private static final String RECORD_FILE_NAME = "agent_records.json";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     public static void register() {
@@ -33,6 +35,9 @@ public class Recordbot {
                                                         .executes(Recordbot::handleRecordCommand))))
                                 .then(Commands.literal("botlist")
                                         .executes(Recordbot::handleBotListCommand))
+                                .then(Commands.literal("reload")
+                                        .requires(source -> source.hasPermission(2))
+                                        .executes(Recordbot::handleReloadCommand))
                 )
         );
     }
@@ -63,13 +68,13 @@ public class Recordbot {
             );
 
             context.getSource().sendSuccess(
-                    () -> Component.translatable("command.modid.agent.record.success", botName, tag),
+                    () -> Component.literal("已记录: bot_name=" + botName + ", tag=" + tag),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.translatable("command.modid.agent.record.error", String.valueOf(e.getMessage()))
+                    Component.literal("写入本地 data 文件失败: " + e.getMessage())
             );
             return 0;
         }
@@ -132,9 +137,46 @@ public class Recordbot {
         }
     }
 
-    private static Path getDataFile(MinecraftServer server) {
-        return server.getWorldPath(LevelResource.ROOT)
+    private static int handleReloadCommand(CommandContext<CommandSourceStack> context) {
+        try {
+            Agent.reloadConfig(context.getSource().getServer());
+            context.getSource().sendSuccess(
+                    () -> Component.literal("Agent 配置已重载"),
+                    true
+            );
+            return 1;
+        } catch (IOException e) {
+            context.getSource().sendFailure(
+                    Component.literal("重载 Agent 配置失败: " + e.getMessage())
+            );
+            return 0;
+        }
+    }
+
+    private static Path getDataFile(MinecraftServer server) throws IOException {
+        Path dataDir = Agent.getAgentDataDirectory(server);
+        Files.createDirectories(dataDir);
+
+        Path dataFile = dataDir.resolve(RECORD_FILE_NAME);
+        if (Files.exists(dataFile)) {
+            return dataFile;
+        }
+
+        Path legacyAgentsDataFile = dataDir.getParent() != null
+                ? dataDir.getParent().resolve("agentsdata").resolve(RECORD_FILE_NAME)
+                : dataDir.resolveSibling("agentsdata").resolve(RECORD_FILE_NAME);
+        if (Files.exists(legacyAgentsDataFile)) {
+            Files.copy(legacyAgentsDataFile, dataFile, StandardCopyOption.REPLACE_EXISTING);
+            return dataFile;
+        }
+
+        Path legacyFile = server.getWorldPath(LevelResource.ROOT)
                 .resolve("data")
-                .resolve("agent_records.json");
+                .resolve(RECORD_FILE_NAME);
+        if (Files.exists(legacyFile)) {
+            Files.copy(legacyFile, dataFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        return dataFile;
     }
 }

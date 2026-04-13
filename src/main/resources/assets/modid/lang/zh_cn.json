@@ -2,8 +2,15 @@
   "command.modid.agent.record.success": "已记录: bot_name=%s, tag=%s",
   "command.modid.agent.record.error": "写入本地 data 文件失败: %s",
   "command.modid.agent.chat.prompt.empty": "请输入提示词，例如：#agent 帮我总结今天任务",
-  "command.modid.agent.chat.api_key.missing": "未配置 API Key，请设置环境变量 MC_AGENT_API_KEY 或 OPENAI_API_KEY",
+  "command.modid.agent.chat.api_key.missing": "未配置 API Key，请编辑 %s 中的 api_key",
   "command.modid.agent.chat.requesting": "正在请求 AI...",
-  "command.modid.agent.chat.reply": "AI: %s",
-  "command.modid.agent.chat.request.failed": "AI 请求失败: %s"
+  "command.modid.agent.chat.reply": "%s: %s",
+  "command.modid.agent.chat.request.failed": "AI 请求失败: %s",
+  "command.modid.agent.chat.request.failed.http": "AI 请求失败：HTTP 状态码 %s",
+  "command.modid.agent.chat.request.failed.invalid_choices": "AI 响应格式错误：缺少 choices 字段",
+  "command.modid.agent.chat.request.failed.invalid_content": "AI 响应格式错误：缺少 message.content 字段",
+  "command.modid.agent.chat.request.failed.network": "AI 网络请求失败：%s",
+  "command.modid.agent.chat.request.failed.unknown": "AI 请求失败：未知错误",
+  "command.modid.agent.reload.success": "Agent 配置已重载",
+  "command.modid.agent.reload.error": "重载 Agent 配置失败: %s"
 }

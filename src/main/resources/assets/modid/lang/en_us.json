@@ -2,8 +2,15 @@
   "command.modid.agent.record.success": "Recorded: bot_name=%s, tag=%s",
   "command.modid.agent.record.error": "Failed to write local data file: %s",
   "command.modid.agent.chat.prompt.empty": "Please provide a prompt, e.g. #agent Summarize today's tasks",
-  "command.modid.agent.chat.api_key.missing": "API key is missing. Please set MC_AGENT_API_KEY or OPENAI_API_KEY",
+  "command.modid.agent.chat.api_key.missing": "API key is missing. Please edit api_key in %s",
   "command.modid.agent.chat.requesting": "Requesting AI...",
-  "command.modid.agent.chat.reply": "AI: %s",
-  "command.modid.agent.chat.request.failed": "AI request failed: %s"
+  "command.modid.agent.chat.reply": "%s: %s",
+  "command.modid.agent.chat.request.failed": "AI request failed: %s",
+  "command.modid.agent.chat.request.failed.http": "AI request failed: HTTP status %s",
+  "command.modid.agent.chat.request.failed.invalid_choices": "Invalid AI response format: missing choices field",
+  "command.modid.agent.chat.request.failed.invalid_content": "Invalid AI response format: missing message.content field",
+  "command.modid.agent.chat.request.failed.network": "AI network request failed: %s",
+  "command.modid.agent.chat.request.failed.unknown": "AI request failed: unknown error",
+  "command.modid.agent.reload.success": "Agent config reloaded",
+  "command.modid.agent.reload.error": "Failed to reload agent config: %s"
 }
