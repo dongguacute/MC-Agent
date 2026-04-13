@@ -27,7 +27,9 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class Agent {
     private static final String AGENT_DISPLAY_NAME = "MCAGENT";
@@ -36,11 +38,19 @@ public class Agent {
     private static final String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
 
-    private static final ExecutorService HTTP_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "mcagents-agent-http");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final int HTTP_THREADS = Math.max(4, Runtime.getRuntime().availableProcessors());
+    private static final ExecutorService HTTP_EXECUTOR = new ThreadPoolExecutor(
+            HTTP_THREADS,
+            HTTP_THREADS,
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(),
+            r -> {
+                Thread t = new Thread(r, "mcagents-agent-http");
+                t.setDaemon(true);
+                return t;
+            }
+    );
 
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
