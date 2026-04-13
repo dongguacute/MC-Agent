@@ -31,7 +31,7 @@ public class Recordbot {
                         Commands.literal("agent")
                                 .then(Commands.literal("record")
                                         .then(Commands.argument("bot_name", StringArgumentType.word())
-                                                .then(Commands.argument("tag", StringArgumentType.word())
+                                                .then(Commands.argument("tag", StringArgumentType.greedyString())
                                                         .executes(Recordbot::handleRecordCommand))))
                                 .then(Commands.literal("botlist")
                                         .executes(Recordbot::handleBotListCommand))

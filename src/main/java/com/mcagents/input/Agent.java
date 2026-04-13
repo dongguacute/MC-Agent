@@ -1,5 +1,6 @@
 package com.mcagents.input;
 
+import com.mcagents.Agent.Startbot;
 import com.mcagents.MCAgentsMod;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -35,6 +36,15 @@ public class Agent {
     private static final String AGENT_DISPLAY_NAME = "MCAGENT";
     private static final String DATA_DIR_NAME = "macagent";
     private static final String CONFIG_FILE_NAME = "macagent.txt";
+    private static final String CONTROL_BOT_SYSTEM_PROMPT = """
+            你是 Minecraft 服务器助手。
+            当且仅当用户明确要求控制假人上下线时，使用以下单行格式输出：
+            [CONTROL_BOT] join <bot_name_or_tag>
+            [CONTROL_BOT] leave <bot_name_or_tag>
+            如果用户按分类/tag下达指令，优先输出 tag；系统会先读取记录库，再按 tag 命中的 bot_name 逐个执行。
+            当 tag 含空格时必须加双引号，例如：[CONTROL_BOT] join "建造 助手"
+            若用户请求与假人上下线无关，不要输出 CONTROL_BOT 指令。
+            """;
     private static final String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
 
@@ -102,10 +112,7 @@ public class Agent {
 
         CompletableFuture
                 .supplyAsync(() -> callOpenAICompatibleApi(player, safePrompt, currentConfig), HTTP_EXECUTOR)
-                .thenAccept(reply -> sendToMainThread(
-                        player,
-                        Component.literal(AGENT_DISPLAY_NAME + ": " + reply).withStyle(ChatFormatting.AQUA)
-                ))
+                .thenAccept(reply -> handleAiReply(player, reply))
                 .exceptionally(ex -> {
                     Throwable root = unwrap(ex);
                     if (root instanceof AgentUserException agentError) {
@@ -115,6 +122,18 @@ public class Agent {
                     }
                     return null;
                 });
+    }
+
+    private static void handleAiReply(ServerPlayer player, String reply) {
+        sendToMainThread(
+                player,
+                Component.literal(AGENT_DISPLAY_NAME + ": " + reply).withStyle(ChatFormatting.AQUA)
+        );
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            return;
+        }
+        server.execute(() -> Startbot.tryHandleAiDirective(player, reply));
     }
 
     private static String callOpenAICompatibleApi(ServerPlayer player, String prompt, AgentConfig currentConfig) {
@@ -235,6 +254,10 @@ public class Agent {
         requestBody.addProperty("stream", stream);
 
         JsonArray messages = new JsonArray();
+        JsonObject systemMessage = new JsonObject();
+        systemMessage.addProperty("role", "system");
+        systemMessage.addProperty("content", CONTROL_BOT_SYSTEM_PROMPT);
+        messages.add(systemMessage);
         JsonObject userMessage = new JsonObject();
         userMessage.addProperty("role", "user");
         userMessage.addProperty("content", prompt);
