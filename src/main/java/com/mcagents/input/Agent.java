@@ -42,6 +42,7 @@ import java.util.regex.Pattern;
 public class Agent {
     private static final String AGENT_DISPLAY_NAME = "MCAGENT";
     private static final String DATA_DIR_NAME = "macagent";
+    private static final String RECORD_FILE_NAME = "agent_records.json";
     private static final String CONFIG_FILE_NAME = "macagent.txt";
     private static final String CONTROL_BOT_PROMPT_RELATIVE_PATH = "src/main/java/com/mcagents/prompt/ControlBot.md";
     private static final String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -133,7 +134,8 @@ public class Agent {
             return;
         }
         String safePrompt = prompt.trim();
-        ConversationPrepareResult prepareResult = prepareConversation(player, safePrompt, currentConfig.maxContextTokens());
+        String runtimeSystemPrompt = buildRuntimeSystemPrompt(player);
+        ConversationPrepareResult prepareResult = prepareConversation(player, safePrompt, currentConfig.maxContextTokens(), runtimeSystemPrompt);
         if (!prepareResult.allowed()) {
             sendToMainThread(player, prepareResult.blockMessage().withStyle(ChatFormatting.YELLOW));
             return;
@@ -142,7 +144,7 @@ public class Agent {
 
         CompletableFuture
                 .supplyAsync(() -> callOpenAICompatibleApi(player, prepareResult.requestMessages(), currentConfig), HTTP_EXECUTOR)
-                .thenAccept(result -> handleAiReply(player, safePrompt, result, prepareResult.version(), currentConfig.maxContextTokens()))
+                .thenAccept(result -> handleAiReply(player, safePrompt, result, prepareResult.version(), currentConfig.maxContextTokens(), prepareResult.systemTokens()))
                 .exceptionally(ex -> {
                     Throwable root = unwrap(ex);
                     if (root instanceof AgentUserException agentError) {
@@ -158,7 +160,7 @@ public class Agent {
         getConversationState(player).reset();
     }
 
-    private static void handleAiReply(ServerPlayer player, String prompt, ApiResult result, long requestVersion, int maxContextTokens) {
+    private static void handleAiReply(ServerPlayer player, String prompt, ApiResult result, long requestVersion, int maxContextTokens, int systemTokens) {
         String reply = result.reply();
         boolean hasDirective = hasControlDirective(reply);
         MinecraftServer server = player.getServer();
@@ -178,7 +180,7 @@ public class Agent {
                 i18n("command.modid.agent.chat.reply", "┌─ %s\n└─ %s", AGENT_DISPLAY_NAME, displayReply).withStyle(ChatFormatting.AQUA)
         );
 
-        ContextStatus contextStatus = getConversationState(player).commitTurn(prompt, reply, requestVersion, maxContextTokens);
+        ContextStatus contextStatus = getConversationState(player).commitTurn(prompt, reply, requestVersion, maxContextTokens, systemTokens);
         int remainingTokens = contextStatus.remainingTokens();
 
         if (maxContextTokens <= 0) {
@@ -349,8 +351,8 @@ public class Agent {
         return requestBody;
     }
 
-    private static ConversationPrepareResult prepareConversation(ServerPlayer player, String prompt, int maxContextTokens) {
-        return getConversationState(player).prepareRequest(prompt, maxContextTokens);
+    private static ConversationPrepareResult prepareConversation(ServerPlayer player, String prompt, int maxContextTokens, String systemPrompt) {
+        return getConversationState(player).prepareRequest(prompt, maxContextTokens, systemPrompt);
     }
 
     private static ConversationState getConversationState(ServerPlayer player) {
@@ -503,6 +505,41 @@ public class Agent {
             }
         }
         throw new IOException("无法加载 ControlBot 提示词文件: " + CONTROL_BOT_PROMPT_RELATIVE_PATH);
+    }
+
+    private static String buildRuntimeSystemPrompt(ServerPlayer player) {
+        String basePrompt = getControlBotSystemPrompt();
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            return basePrompt;
+        }
+        String recordsJson = loadAgentRecordsJson(server);
+        return basePrompt
+                + "\n\nCurrent bot record library (JSON):\n"
+                + recordsJson
+                + "\nYou MUST read this library before any control decision. Keep normal replies concise.";
+    }
+
+    private static String loadAgentRecordsJson(MinecraftServer server) {
+        try {
+            Path dataFile = getAgentDataDirectory(server).resolve(RECORD_FILE_NAME);
+            if (!Files.exists(dataFile)) {
+                return "[]";
+            }
+            String content = Files.readString(dataFile, StandardCharsets.UTF_8).trim();
+            if (content.isEmpty()) {
+                return "[]";
+            }
+            JsonElement parsed = JsonParser.parseString(content);
+            String normalized = parsed.toString();
+            int maxChars = 5000;
+            if (normalized.length() <= maxChars) {
+                return normalized;
+            }
+            return normalized.substring(0, maxChars) + "...(truncated)";
+        } catch (Exception ignored) {
+            return "[]";
+        }
     }
 
     private static String buildProgressBar(int usedTokens, int totalTokens, int width) {
@@ -1002,6 +1039,7 @@ public class Agent {
             boolean allowed,
             JsonArray requestMessages,
             long version,
+            int systemTokens,
             MutableComponent blockMessage
     ) {
     }
@@ -1023,12 +1061,12 @@ public class Agent {
         private int usedTokens = 0;
         private long version = 0L;
 
-        private synchronized ConversationPrepareResult prepareRequest(String prompt, int maxContextTokens) {
+        private synchronized ConversationPrepareResult prepareRequest(String prompt, int maxContextTokens, String systemPrompt) {
             if (maxContextTokens <= 0) {
                 JsonArray payloadMessages = new JsonArray();
                 JsonObject systemMessage = new JsonObject();
                 systemMessage.addProperty("role", "system");
-                systemMessage.addProperty("content", getControlBotSystemPrompt());
+                systemMessage.addProperty("content", systemPrompt);
                 payloadMessages.add(systemMessage);
                 for (ChatMessage message : messages) {
                     JsonObject item = new JsonObject();
@@ -1040,14 +1078,15 @@ public class Agent {
                 currentPrompt.addProperty("role", "user");
                 currentPrompt.addProperty("content", prompt);
                 payloadMessages.add(currentPrompt);
-                return new ConversationPrepareResult(true, payloadMessages, version, null);
+                return new ConversationPrepareResult(true, payloadMessages, version, 0, null);
             }
-            int systemTokens = estimateTokens(getControlBotSystemPrompt()) + MESSAGE_OVERHEAD_TOKENS;
+            int systemTokens = estimateTokens(systemPrompt) + MESSAGE_OVERHEAD_TOKENS;
             if (systemTokens >= maxContextTokens || usedTokens + systemTokens >= maxContextTokens) {
                 return new ConversationPrepareResult(
                         false,
                         null,
                         version,
+                        systemTokens,
                         i18n(
                                 "command.modid.agent.chat.context.full",
                                 "[%s] 上下文已满，请先执行 /agent new 新建对话。",
@@ -1063,6 +1102,7 @@ public class Agent {
                         false,
                         null,
                         version,
+                        systemTokens,
                         i18n(
                                 "command.modid.agent.chat.context.not_enough",
                                 "[%s] 当前剩余上下文为 %s tokens，本次输入预计需要 %s tokens。请执行 /agent new 新建对话。",
@@ -1076,7 +1116,7 @@ public class Agent {
             JsonArray payloadMessages = new JsonArray();
             JsonObject systemMessage = new JsonObject();
             systemMessage.addProperty("role", "system");
-            systemMessage.addProperty("content", getControlBotSystemPrompt());
+            systemMessage.addProperty("content", systemPrompt);
             payloadMessages.add(systemMessage);
             for (ChatMessage message : messages) {
                 JsonObject item = new JsonObject();
@@ -1088,10 +1128,10 @@ public class Agent {
             currentPrompt.addProperty("role", "user");
             currentPrompt.addProperty("content", prompt);
             payloadMessages.add(currentPrompt);
-            return new ConversationPrepareResult(true, payloadMessages, version, null);
+            return new ConversationPrepareResult(true, payloadMessages, version, systemTokens, null);
         }
 
-        private synchronized ContextStatus commitTurn(String prompt, String reply, long expectedVersion, int maxContextTokens) {
+        private synchronized ContextStatus commitTurn(String prompt, String reply, long expectedVersion, int maxContextTokens, int systemTokens) {
             if (maxContextTokens <= 0) {
                 if (version == expectedVersion) {
                     appendMessage("user", prompt);
@@ -1099,7 +1139,6 @@ public class Agent {
                 }
                 return new ContextStatus(-1, false);
             }
-            int systemTokens = estimateTokens(getControlBotSystemPrompt()) + MESSAGE_OVERHEAD_TOKENS;
             if (version != expectedVersion) {
                 int remainingTokens = Math.max(0, maxContextTokens - systemTokens - usedTokens);
                 return new ContextStatus(remainingTokens, remainingTokens <= 0);

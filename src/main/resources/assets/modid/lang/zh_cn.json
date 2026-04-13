@@ -45,6 +45,7 @@
   "command.modid.agent.control.target.not_found_or_invalid": "未找到该 tag 对应的 bot，且输入也不是合法 bot_name（3-16 位字母/数字/下划线）",
   "command.modid.agent.control.rate_limited": "请求过于频繁：%s 秒内最多 %s 次控制请求，请在 %s 秒后重试",
   "command.modid.agent.control.conflict.detected": "检测到冲突指令，已跳过 bot: %s。最近由 %s 执行了 %s 指令，请稍后重试",
+  "command.modid.agent.control.restore.missing_state": "未找到 %s 的历史位置缓存，本次将按默认上线位置生成。先让其下线一次可建立位置缓存",
   "command.modid.agent.control.restore.failed": "已上线但恢复原位置失败: %s，%s",
   "command.modid.agent.reload.success": "Agent 配置已重载",
   "command.modid.agent.reload.error": "重载 Agent 配置失败: %s"

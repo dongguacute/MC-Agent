@@ -45,6 +45,7 @@
   "command.modid.agent.control.target.not_found_or_invalid": "No bots matched this tag, and input is not a valid bot_name (3-16 letters/numbers/underscore)",
   "command.modid.agent.control.rate_limited": "Too many requests: at most %2$s control requests within %1$s seconds. Retry in %3$s seconds",
   "command.modid.agent.control.conflict.detected": "Conflicting directive detected. Skipped bots: %s. Recent action by %s: %s. Please retry later",
+  "command.modid.agent.control.restore.missing_state": "No cached position found for %s. This join uses the default spawn location. Let it go offline once to create a position cache.",
   "command.modid.agent.control.restore.failed": "Bot online, but failed to restore previous position: %s, %s",
   "command.modid.agent.reload.success": "Agent config reloaded",
   "command.modid.agent.reload.error": "Failed to reload agent config: %s"

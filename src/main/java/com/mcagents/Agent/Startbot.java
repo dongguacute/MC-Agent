@@ -27,7 +27,6 @@ import java.util.regex.Pattern;
 
 public class Startbot {
     private static final String RECORD_FILE_NAME = "agent_records.json";
-    private static final String BOT_STATE_FILE_NAME = "agent_bot_state.json";
     private static final long RATE_LIMIT_WINDOW_MS = 10_000L;
     private static final int RATE_LIMIT_MAX_REQUESTS = 3;
     private static final long DIRECTIVE_CONFLICT_WINDOW_MS = 10_000L;
@@ -52,21 +51,25 @@ public class Startbot {
         }
 
         Matcher matcher = AI_CONTROL_PATTERN.matcher(aiReply);
-        if (!matcher.find()) {
-            return false;
-        }
-
-        String action = matcher.group(1).toLowerCase();
-        String botNameOrTag = matcher.group(2) != null ? matcher.group(2) : matcher.group(3);
         CommandSourceStack source = createAgentSourceFromPlayer(player);
-        int result = handleControl(source, action, botNameOrTag);
-        return result == 1;
+        boolean matchedAny = false;
+        boolean successAny = false;
+        while (matcher.find()) {
+            matchedAny = true;
+            String action = matcher.group(1).toLowerCase();
+            String botNameOrTag = matcher.group(2) != null ? matcher.group(2) : matcher.group(3);
+            int result = handleControl(source, action, botNameOrTag);
+            if (result == 1) {
+                successAny = true;
+            }
+        }
+        return matchedAny && successAny;
     }
 
     private static int handleControl(CommandSourceStack source, String action, String botNameOrTag) {
         String subCommand;
         if ("join".equalsIgnoreCase(action)) {
-            subCommand = "spawn";
+            subCommand = "rejoin";
         } else if ("leave".equalsIgnoreCase(action)) {
             subCommand = "kill";
         } else {
@@ -109,9 +112,6 @@ public class Startbot {
         int successCount = 0;
         List<String> failedBots = new ArrayList<>();
         for (String botName : conflictCheck.executableBots()) {
-            if ("leave".equalsIgnoreCase(action)) {
-                saveBotCurrentPosition(server, botName);
-            }
             String carpetCommand = "player " + botName + " " + subCommand;
             try {
                 int executeResult = server.getCommands().getDispatcher().execute(
@@ -119,9 +119,6 @@ public class Startbot {
                         source.withPermission(4)
                 );
                 if (executeResult > 0) {
-                    if ("join".equalsIgnoreCase(action)) {
-                        restoreBotPositionIfPresent(source, server, botName);
-                    }
                     successCount++;
                 } else {
                     failedBots.add(botName);
@@ -203,12 +200,6 @@ public class Startbot {
         return dataDir.resolve(RECORD_FILE_NAME);
     }
 
-    private static Path getBotStateFile(MinecraftServer server) throws IOException {
-        Path dataDir = Agent.getAgentDataDirectory(server);
-        Files.createDirectories(dataDir);
-        return dataDir.resolve(BOT_STATE_FILE_NAME);
-    }
-
     private static JsonArray readRecords(Path dataFile) throws IOException {
         if (!Files.exists(dataFile)) {
             return new JsonArray();
@@ -224,69 +215,8 @@ public class Startbot {
         }
     }
 
-    private static void saveBotCurrentPosition(MinecraftServer server, String botName) {
-        ServerPlayer bot = server.getPlayerList().getPlayerByName(botName);
-        if (bot == null) {
-            return;
-        }
-        try {
-            JsonObject states = readBotStates(getBotStateFile(server));
-            JsonObject botState = new JsonObject();
-            botState.addProperty("dimension", bot.level().dimension().location().toString());
-            botState.addProperty("x", bot.getX());
-            botState.addProperty("y", bot.getY());
-            botState.addProperty("z", bot.getZ());
-            botState.addProperty("yaw", bot.getYRot());
-            botState.addProperty("pitch", bot.getXRot());
-            states.add(botName, botState);
-            writeBotStates(getBotStateFile(server), states);
-        } catch (IOException ignored) {
-            // 记录位置失败不阻断主流程。
-        }
-    }
-
-    private static void restoreBotPositionIfPresent(CommandSourceStack source, MinecraftServer server, String botName) {
-        try {
-            JsonObject states = readBotStates(getBotStateFile(server));
-            if (!states.has(botName) || !states.get(botName).isJsonObject()) {
-                return;
-            }
-            JsonObject botState = states.getAsJsonObject(botName);
-            String dimension = botState.has("dimension") ? botState.get("dimension").getAsString() : "minecraft:overworld";
-            double x = botState.has("x") ? botState.get("x").getAsDouble() : 0.0D;
-            double y = botState.has("y") ? botState.get("y").getAsDouble() : 64.0D;
-            double z = botState.has("z") ? botState.get("z").getAsDouble() : 0.0D;
-            float yaw = botState.has("yaw") ? botState.get("yaw").getAsFloat() : 0.0F;
-            float pitch = botState.has("pitch") ? botState.get("pitch").getAsFloat() : 0.0F;
-
-            String tpCommand = "execute in " + dimension + " run tp " + botName + " " + x + " " + y + " " + z + " " + yaw + " " + pitch;
-            server.getCommands().getDispatcher().execute(tpCommand, source.withPermission(4));
-        } catch (Exception e) {
-            source.sendFailure(i18n("command.modid.agent.control.restore.failed", "已上线但恢复原位置失败: %s，%s", botName, e.getMessage()));
-        }
-    }
-
     private static MutableComponent i18n(String key, String fallback, Object... args) {
         return Component.translatableWithFallback(key, fallback, args);
-    }
-
-    private static JsonObject readBotStates(Path stateFile) throws IOException {
-        if (!Files.exists(stateFile)) {
-            return new JsonObject();
-        }
-        String content = Files.readString(stateFile).trim();
-        if (content.isEmpty()) {
-            return new JsonObject();
-        }
-        try {
-            return JsonParser.parseString(content).getAsJsonObject();
-        } catch (Exception ignored) {
-            return new JsonObject();
-        }
-    }
-
-    private static void writeBotStates(Path stateFile, JsonObject states) throws IOException {
-        Files.writeString(stateFile, states.toString());
     }
 
     private static CommandSourceStack createAgentSourceFromPlayer(ServerPlayer player) {
