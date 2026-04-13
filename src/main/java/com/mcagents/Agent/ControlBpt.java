@@ -1,5 +1,5 @@
 package com.mcagents.Agent;
 
-public class Startbot {
+public class ControlBpt {
     
 }
