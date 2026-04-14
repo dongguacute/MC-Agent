@@ -50,9 +50,22 @@ Total context length is **resolved via [OpenRouter](https://openrouter.ai/)** (`
 
 ## Configuration
 
-On first server start, a file is created next to `server.properties` (server root):
+### Where the file lives
 
-**`macagent.txt`** (key `=` value, lines starting with `#` are comments):
+The mod resolves the **server root** by walking upward from the world folder until it finds `server.properties` or `eula.txt`. The config file is always:
+
+**`<server root>/macagent.txt`**
+
+(i.e. the same directory as `server.properties` on a typical dedicated server).
+
+### Format
+
+Plain text, one **`key=value`** per line:
+
+- Lines starting with **`#`** and blank lines are ignored.
+- On **first start**, if `macagent.txt` is missing, the mod writes a **default template** (with commented hints) and logs the path.
+
+### Keys
 
 | Key | Description |
 |-----|-------------|
@@ -60,6 +73,13 @@ On first server start, a file is created next to `server.properties` (server roo
 | `api_key` | Bearer token for `api_url`. |
 | `openrouter_api_key` | Optional separate key for OpenRouter `/models`; if empty, `api_key` is used. |
 | `model` | Model id (default in code: `gpt-4o-mini`). |
+| `max_context_tokens` | **Ignored** — total context is **auto-detected** from OpenRouter’s model metadata (see [Context window size](#context-window-size)); if present, a warning is logged. |
+
+### Legacy paths (migration)
+
+If `macagent.txt` is not yet at the server root, the mod may **copy** an existing file from a legacy location, for example under `agentsdata/`, next to the world folder, or inside the world directory. Check the server log for `Migrated config file from …` when this happens.
+
+### Applying changes
 
 Reload without restart: **`/agent reload`** (permission level **2**).
 
@@ -99,7 +119,7 @@ Legacy paths may be migrated automatically (`agentsdata`, world `data/`, etc.) �
 - **Per-player chat history** with rough token estimation and a **context usage bar** when max context is known.
 - **Minecraft Wiki integration** — MediaWiki API against **minecraft.wiki** and **zh.minecraft.wiki** (auto pick by Latin vs CJK in the query; fallback to the other wiki if needed).
 - **Knowledge-style `/agent ask`** — For wiki-like questions, the server runs a **keyword-extraction** call (`WIKI_QUERY: …`), **searches** Minecraft Wiki, injects excerpts, then the model answers **once** from that context (no extra “answer first, wiki supplement” round-trip from the server).
-- **`[MC_WIKI_SEARCH]` lines** — If the model outputs them, they are stripped from chat display and from committed history; the server does **not** enqueue chained wiki follow-up requests.
+- **`[MC_WIKI_SEARCH]` lines** — If the model outputs them, the **first** assistant message is **not** shown to the player and is **not** committed; the server runs **Minecraft Wiki** search (up to three queries), then requests **one** final answer that is shown and stored. The final reply does **not** trigger further wiki rounds (no chaining).
 - **Compound prompts** — “Conversation complete” and **context usage** messages are shown **once**, after the **last** sub-prompt finishes.
 - **Carpet bot control** — If the model outputs lines such as `[CONTROL_BOT] join <tag_or_name>` or `[CONTROL_BOT] leave …`, the server parses them and runs Carpet `player` subcommands (`rejoin` / `kill`), with **rate limits** and **cross-player conflict avoidance** for the same bot name. Targets resolve by **tag** from `agent_records.json` or direct **bot name** (3–16 chars, `[A-Za-z0-9_]`).
 - **Sanitization** — Control directives and wiki directive lines are hidden from normal displayed text; prompt-leak patterns are reduced for “thinking” streams.
@@ -129,12 +149,12 @@ The remapped mod JAR is under `build/libs/`. CI (`.github/workflows/build.yml`) 
 
 ## Project metadata
 
-- **Mod id:** `modid` (internal identifier; consider renaming for public release).
+- **Mod id:** `mc-agents` in `fabric.mod.json` (some docs may still reference the older internal name `modid`).
 - **Maven group / version:** see `gradle.properties` (`maven_group`, `mod_version`).
-- **Author:** Cherry Fu (see `fabric.mod.json`).
+- **Author:** [Cherry Fu](mailto:me@dgct.cc) (`fabric.mod.json`).
 
 ---
 
 ## License
 
-See the `LICENSE` file included in the repository (referenced by the Gradle `jar` task).
+This project is released under the **MIT License**. See [`LICENSE`](LICENSE) in the repository root (the Gradle `jar` task bundles it into the built JAR).

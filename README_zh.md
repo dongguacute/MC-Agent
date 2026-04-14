@@ -50,9 +50,22 @@
 
 ## 配置
 
-首次启动服务端时，会在 **`server.properties` 同目录**（服务端根目录）生成：
+### 配置文件位置
 
-**`macagent.txt`**（`键=值` 格式，`#` 开头为注释）：
+模组会从**世界目录**向上查找，直到出现 `server.properties` 或 `eula.txt`，将该目录视为**服务端根目录**。配置文件固定为：
+
+**`<服务端根目录>/macagent.txt`**
+
+（与常见独立服务端中 `server.properties` 所在目录一致。）
+
+### 格式
+
+纯文本，每行一条 **`键=值`**：
+
+- 以 **`#`** 开头的行与空行会被忽略。
+- **首次启动**且不存在 `macagent.txt` 时，模组会**写入默认模板**（含注释说明）并在日志中输出路径。
+
+### 配置项
 
 | 键 | 说明 |
 |----|------|
@@ -60,6 +73,13 @@
 | `api_key` | 访问 `api_url` 的 Bearer 令牌。 |
 | `openrouter_api_key` | 可选，专用于 OpenRouter `/models`；留空则回退使用 `api_key`。 |
 | `model` | 模型 id（代码内默认：`gpt-4o-mini`）。 |
+| `max_context_tokens` | **无效**：总上下文由 OpenRouter 模型元数据**自动解析**（见上文「上下文窗口长度」）；若填写会记录警告并忽略。 |
+
+### 旧版路径迁移
+
+若服务端根目录下尚无 `macagent.txt`，但旧路径已存在配置（例如 `agentsdata/`、世界旁目录、世界目录内等），模组可能**自动复制**到上述新位置。发生迁移时日志会出现 `Migrated config file from …`。
+
+### 生效方式
 
 无需重启即可重载：**`/agent reload`**（权限等级 **2**）。
 
@@ -99,7 +119,7 @@
 - **按玩家会话历史**：粗略估算 token；在已知最大上下文时显示**上下文用量进度条**。
 - **Minecraft Wiki**：通过 MediaWiki API 访问 **minecraft.wiki** 与 **zh.minecraft.wiki**（按检索词拉丁/CJK 比例选站，必要时切换另一站点）。
 - **资料类 `/agent ask`**：启发式识别「维基类」问题；服务端先 **提取检索词**（`WIKI_QUERY: …`）、**搜索** Wiki、注入摘录后，再由模型 **单次** 作答（不会在服务端再跑一轮「先答再 Wiki 补答」）。
-- **`[MC_WIKI_SEARCH]` 行**：若模型输出，会从聊天展示与写入历史的正文中剥离；服务端 **不再** 根据该标记自动链式发起补充 Wiki 请求。
+- **`[MC_WIKI_SEARCH]` 行**：若模型输出，**第一轮**助手回复**不会**展示给玩家、也**不会**写入历史；服务端对 **Minecraft Wiki** 检索（每条回复最多 3 条查询）后，再请求模型生成**唯一一条**可见的总结并写入对话。该最终回复 **不会** 再触发更多 Wiki 轮次。
 - **复合指令**：**「对话完成」**与 **上下文用量** 仅在 **整段复合指令全部执行完毕**（最后一个子任务结束）后提示一次。
 - **Carpet 假人控制**：若模型输出 `[CONTROL_BOT] join <标签或名称>` 或 `[CONTROL_BOT] leave …`，服务端会解析并执行 Carpet 的 `player` 子命令（`rejoin` / `kill`），含**频率限制**与同名假人的**跨玩家冲突保护**。目标可通过 `agent_records.json` 的 **tag** 解析，或直接填写 **bot 名**（3–16 位，仅 `[A-Za-z0-9_]`）。
 - **展示清洗**：控制指令与 Wiki 指令行不会作为普通回复全文展示；对「思考」流会尽量抑制提示词泄露类内容。
@@ -129,12 +149,12 @@
 
 ## 项目信息
 
-- **模组 id：** `modid`（内部标识；公开发布时可考虑改名）。
+- **模组 id：** `mc-agents`（见 `fabric.mod.json`；部分旧文档可能仍写为 `modid`）。
 - **Maven 组与版本：** 见 `gradle.properties`（`maven_group`、`mod_version`）。
-- **作者：** Cherry Fu（见 `fabric.mod.json`）。
+- **作者：** [Cherry Fu](mailto:me@dgct.cc)（`fabric.mod.json`）。
 
 ---
 
 ## 许可证
 
-见仓库中的 `LICENSE` 文件（Gradle `jar` 任务会引用该文件）。
+本项目采用 **MIT 许可证**。完整文本见仓库根目录 [`LICENSE`](LICENSE)（Gradle `jar` 任务会将该文件打入构建产物）。
