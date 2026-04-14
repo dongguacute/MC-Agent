@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mcagents.input.Agent;
 import com.mcagents.util.CommandSourceFeedback;
+import com.mcagents.util.CommandSourcePermissions;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -120,7 +121,7 @@ public class Startbot {
             try {
                 int executeResult = server.getCommands().getDispatcher().execute(
                         carpetCommand,
-                        source.withPermission(4)
+                        CommandSourcePermissions.withPermissionLevel(source, 4)
                 );
                 if (executeResult > 0) {
                     successCount++;
@@ -226,8 +227,7 @@ public class Startbot {
     }
 
     private static CommandSourceStack createAgentSourceFromPlayer(ServerPlayer player) {
-        return player.createCommandSourceStack()
-                .withPermission(4);
+        return CommandSourcePermissions.withPermissionLevel(player.createCommandSourceStack(), 4);
     }
 
     private static ConflictCheckResult filterConflictingTargets(CommandSourceStack source, String action, List<String> targetBotNames) {

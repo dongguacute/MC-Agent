@@ -3,6 +3,7 @@ package com.mcagents.input;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mcagents.util.CommandSourceFeedback;
+import com.mcagents.util.CommandSourcePermissions;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -69,7 +70,7 @@ public class Recordbot {
                                 .then(Commands.literal("new")
                                         .executes(Recordbot::handleNewCommand))
                                 .then(Commands.literal("reload")
-                                        .requires(source -> source.hasPermission(2))
+                                        .requires(CommandSourcePermissions.requiresPermissionLevel(2))
                                         .executes(Recordbot::handleReloadCommand))
                                 .then(Commands.argument("prompt", StringArgumentType.greedyString())
                                         .executes(Recordbot::handleAskCommand))
