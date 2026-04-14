@@ -9,6 +9,8 @@ import net.minecraft.server.level.ServerPlayer;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
@@ -45,10 +47,13 @@ public final class AgentLang {
         init();
         if (player != null) {
             try {
-                String loc = normalizeLocale(player.clientInformation().language());
-                String v = get(loc, key);
-                if (v != null) {
-                    return v;
+                String raw = resolveRawLocale(player);
+                if (raw != null) {
+                    String loc = normalizeLocale(raw);
+                    String v = get(loc, key);
+                    if (v != null) {
+                        return v;
+                    }
                 }
             } catch (Throwable ignored) {
             }
@@ -72,6 +77,58 @@ public final class AgentLang {
             }
         }
         return translate((ServerPlayer) null, key, fallback);
+    }
+
+    /**
+     * 各 MC 版本差异：1.19.4–1.20.1 无 {@code clientInformation()}；1.20.2+ 多为 ClientInformation / language 字段。
+     * 用反射避免对旧版编译时依赖不存在的方法；无法解析时返回 {@code null}，由调用方走默认语言链。
+     */
+    private static String resolveRawLocale(ServerPlayer player) {
+        if (player == null) {
+            return null;
+        }
+        Object options = invokeNoArg(player, "clientInformation");
+        if (options == null) {
+            options = invokeNoArg(player, "getClientOptions");
+        }
+        if (options != null) {
+            String fromOptions = invokeLanguage(options);
+            if (fromOptions != null) {
+                return fromOptions;
+            }
+        }
+        try {
+            Field f = ServerPlayer.class.getDeclaredField("language");
+            f.setAccessible(true);
+            Object v = f.get(player);
+            if (v instanceof String s && !s.isBlank()) {
+                return s;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static Object invokeNoArg(Object target, String name) {
+        try {
+            Method m = target.getClass().getMethod(name);
+            return m.invoke(target);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String invokeLanguage(Object clientOptions) {
+        if (clientOptions == null) {
+            return null;
+        }
+        try {
+            Method m = clientOptions.getClass().getMethod("language");
+            Object v = m.invoke(clientOptions);
+            return v instanceof String s && !s.isBlank() ? s : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static String normalizeLocale(String raw) {
