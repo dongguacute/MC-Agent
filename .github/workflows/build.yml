@@ -199,12 +199,6 @@ jobs:
             cat /tmp/modrinth-project.json >&2 || true
             exit 1
           fi
-          # POST /version 的 payload 里 project_id 必须是 base62 ID，不能是带连字符的 slug
-          PROJECT_ID_BASE62="$(jq -r '.id' /tmp/modrinth-project.json)"
-          if [[ -z "${PROJECT_ID_BASE62}" || "${PROJECT_ID_BASE62}" == "null" ]]; then
-            echo "Could not read project id from Modrinth project response" >&2
-            exit 1
-          fi
           parts=()
           file_args=()
           i=0
@@ -219,7 +213,7 @@ jobs:
             --arg name "$VERSION_NUMBER" \
             --arg version_number "$VERSION_NUMBER" \
             --arg changelog "$CHANGELOG" \
-            --arg project_id "$PROJECT_ID_BASE62" \
+            --arg project_id "$PROJECT_ID" \
             --arg primary_file "${parts[0]}" \
             --argjson game_versions "$game_versions_json" \
             --argjson file_parts "$file_parts_json" \
@@ -236,7 +230,7 @@ jobs:
               file_parts: $file_parts,
               primary_file: $primary_file
             }' > /tmp/modrinth-version.json
-          echo "Uploading version ${VERSION_NUMBER} to Modrinth project ${PROJECT_ID} (id ${PROJECT_ID_BASE62}) (game versions: $(IFS=,; echo "${filtered[*]}"))"
+          echo "Uploading version ${VERSION_NUMBER} to Modrinth project ${PROJECT_ID} (game versions: $(IFS=,; echo "${filtered[*]}"))"
           # multipart 中 data 必须在所有文件字段之前（Labrinth 要求）
           http_code=$(curl -sS -w "%{http_code}" -o /tmp/modrinth-upload.json \
             -X POST "https://api.modrinth.com/v2/version" \
