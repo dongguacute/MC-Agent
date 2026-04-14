@@ -11,6 +11,7 @@ on:
 env:
   # 与 src/main/resources/fabric.mod.json 中 id 一致
   MOD_ID: mc-agents
+  # Modrinth 项目 slug 或 base62 ID；若与 MOD_ID 不同，在仓库 Variables 中设置 MODRINTH_PROJECT_ID 覆盖
 
 jobs:
   discover:
@@ -128,3 +129,88 @@ jobs:
         with:
           name: Artifacts
           path: dist/${{ env.MOD_ID }}-*.jar
+
+  upload-modrinth:
+    needs: build
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'release'
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+      MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: download all jars
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jar-*
+          path: dist
+          merge-multiple: true
+      - name: upload to Modrinth
+        run: |
+          set -euo pipefail
+          if [[ -z "${MODRINTH_TOKEN:-}" ]]; then
+            echo "::notice::MODRINTH_TOKEN is not set; skipping Modrinth upload."
+            exit 0
+          fi
+          PROJECT_ID="${MODRINTH_PROJECT_ID:-$MOD_ID}"
+          TAG="${RELEASE_TAG}"
+          VERSION_NUMBER="${TAG#v}"
+          shopt -s nullglob
+          jars=(dist/"${MOD_ID}"-*.jar)
+          if [[ ${#jars[@]} -eq 0 ]]; then
+            echo "No dist/${MOD_ID}-*.jar after download" >&2
+            exit 1
+          fi
+          mapfile -t sorted < <(printf '%s\n' "${jars[@]}" | sort -V)
+          game_versions=()
+          for f in "${sorted[@]}"; do
+            base=$(basename "$f")
+            mc="${base#${MOD_ID}-}"
+            mc="${mc%.jar}"
+            game_versions+=("$mc")
+          done
+          mapfile -t game_versions < <(printf '%s\n' "${game_versions[@]}" | sort -uV)
+          game_versions_json=$(printf '%s\n' "${game_versions[@]}" | jq -R . | jq -s .)
+          CHANGELOG="$(gh release view "$TAG" --json body -q .body -R "${GITHUB_REPOSITORY}" 2>/dev/null || true)"
+          parts=()
+          file_args=()
+          i=0
+          for f in "${sorted[@]}"; do
+            part="file${i}"
+            parts+=("$part")
+            file_args+=(-F "${part}=@${f}")
+            ((i++)) || true
+          done
+          file_parts_json=$(printf '%s\n' "${parts[@]}" | jq -R . | jq -s .)
+          jq -n \
+            --arg name "$VERSION_NUMBER" \
+            --arg version_number "$VERSION_NUMBER" \
+            --arg changelog "$CHANGELOG" \
+            --arg project_id "$PROJECT_ID" \
+            --arg primary_file "${parts[0]}" \
+            --argjson game_versions "$game_versions_json" \
+            --argjson file_parts "$file_parts_json" \
+            '{
+              name: $name,
+              version_number: $version_number,
+              changelog: $changelog,
+              dependencies: [],
+              game_versions: $game_versions,
+              version_type: "release",
+              loaders: ["fabric"],
+              featured: false,
+              status: "listed",
+              project_id: $project_id,
+              file_parts: $file_parts,
+              primary_file: $primary_file
+            }' > /tmp/modrinth-version.json
+          echo "Uploading version ${VERSION_NUMBER} to Modrinth project ${PROJECT_ID} (game versions: $(IFS=,; echo "${game_versions[*]}"))"
+          curl -fsSL -X POST "https://api.modrinth.com/v2/version" \
+            -H "Authorization: ${MODRINTH_TOKEN}" \
+            -H "User-Agent: ${GITHUB_REPOSITORY}/${GITHUB_RUN_ID} (github.com/${GITHUB_REPOSITORY})" \
+            -F "data=@/tmp/modrinth-version.json;type=application/json" \
+            "${file_args[@]}"
+          echo "Modrinth upload finished."
