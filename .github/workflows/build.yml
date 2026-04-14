@@ -8,14 +8,47 @@ on:
   release:
     types: [published]
 
+env:
+  # 与 src/main/resources/fabric.mod.json 中 id 一致
+  MOD_ID: mc-agents
+
 jobs:
-  build:
+  discover:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    env:
-      # 与 src/main/resources/fabric.mod.json 中 id 一致
-      MOD_ID: mc-agents
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: discover Minecraft / Fabric API versions
+        id: set-matrix
+        env:
+          MIN_MC: '1.19.4'
+          FABRIC_META_URL: 'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml'
+        run: |
+          set -euo pipefail
+          curl -fsSL "$FABRIC_META_URL" -o /tmp/fabric-api-maven-metadata.xml
+          grep -oE '[0-9]+\.[0-9.]+\+1\.(19|20|21)\.[0-9]+' /tmp/fabric-api-maven-metadata.xml | sort -uV > /tmp/fabric-api-all.txt
+          [[ -s /tmp/fabric-api-all.txt ]] || { echo "No fabric-api versions parsed from metadata" >&2; exit 1; }
+          mapfile -t MC_VERSIONS < <(sed 's/.*+//' /tmp/fabric-api-all.txt | sort -uV)
+          items=()
+          for mc in "${MC_VERSIONS[@]}"; do
+            low="$(printf '%s\n' "$MIN_MC" "$mc" | sort -V | head -1)"
+            [[ "$low" == "$MIN_MC" ]] || continue
+            latest="$(awk -F'+' -v mc="$mc" 'NF == 2 && $2 == mc' /tmp/fabric-api-all.txt | sort -V | tail -1)"
+            [[ -n "$latest" ]] || continue
+            items+=("$(printf '{"minecraft_version":"%s","fabric_api_version":"%s"}' "$mc" "$latest")")
+          done
+          [[ ${#items[@]} -gt 0 ]] || { echo "No matrix entries after filtering" >&2; exit 1; }
+          json="$(printf '[%s]' "$(IFS=,; echo "${items[*]}")")"
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          echo "Matrix: $json"
+
+  build:
+    needs: discover
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.matrix) }}
     steps:
       - name: checkout repository
         uses: actions/checkout@v6
@@ -28,46 +61,61 @@ jobs:
           distribution: 'microsoft'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
-      - name: build all compatible Minecraft releases
+      - name: build ${{ env.MOD_ID }} for Minecraft ${{ matrix.minecraft_version }}
         env:
-          # 须与 fabric.mod.json 中 depends.minecraft 一致：>=1.19.4 <1.23（此处构建 1.19.4–1.21.x，与 Fabric API 发布一致）
-          MIN_MC: '1.19.4'
-          FABRIC_META_URL: 'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml'
+          MOD_ID: ${{ env.MOD_ID }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          curl -fsSL "$FABRIC_META_URL" -o /tmp/fabric-api-maven-metadata.xml
-          # 从 Maven 元数据列出 fabric-api 正式版坐标（1.19.x / 1.20.x / 1.21.x）；不含快照
-          grep -oE '[0-9]+\.[0-9.]+\+1\.(19|20|21)\.[0-9]+' /tmp/fabric-api-maven-metadata.xml | sort -uV > /tmp/fabric-api-all.txt
-          [[ -s /tmp/fabric-api-all.txt ]] || { echo "No fabric-api versions parsed from metadata" >&2; exit 1; }
-          # 每个游戏版本只取当前仍发布在元数据中的、该版本号下最新的 Fabric API
-          mapfile -t MC_VERSIONS < <(sed 's/.*+//' /tmp/fabric-api-all.txt | sort -uV)
-          for mc in "${MC_VERSIONS[@]}"; do
-            low="$(printf '%s\n' "$MIN_MC" "$mc" | sort -V | head -1)"
-            [[ "$low" == "$MIN_MC" ]] || continue
-            latest="$(awk -F'+' -v mc="$mc" 'NF == 2 && $2 == mc' /tmp/fabric-api-all.txt | sort -V | tail -1)"
-            [[ -n "$latest" ]] || continue
-            echo "Building ${MOD_ID}-${mc}.jar (Fabric API ${latest})"
-            ./gradlew clean build --no-daemon -Pminecraft_version="$mc" -Pfabric_api_version="$latest"
-            JAR=""
-            for f in build/libs/*.jar; do
-              [[ -f "$f" ]] || continue
-              case "$f" in
-                *-sources.jar|*-dev.jar|*-javadoc.jar) continue ;;
-                *) JAR="$f"; break ;;
-              esac
-            done
-            if [[ -z "$JAR" ]]; then
-              echo "No main jar found in build/libs" >&2
-              ls -la build/libs/ || true
-              exit 1
-            fi
-            cp "$JAR" "dist/${MOD_ID}-${mc}.jar"
+          echo "Building ${MOD_ID}-${{ matrix.minecraft_version }}.jar (Fabric API ${{ matrix.fabric_api_version }})"
+          ./gradlew clean build --no-daemon \
+            -Pminecraft_version="${{ matrix.minecraft_version }}" \
+            -Pfabric_api_version="${{ matrix.fabric_api_version }}"
+          JAR=""
+          for f in build/libs/*.jar; do
+            [[ -f "$f" ]] || continue
+            case "$f" in
+              *-sources.jar|*-dev.jar|*-javadoc.jar) continue ;;
+              *) JAR="$f"; break ;;
+            esac
           done
+          if [[ -z "$JAR" ]]; then
+            echo "No main jar found in build/libs" >&2
+            ls -la build/libs/ || true
+            exit 1
+          fi
+          cp "$JAR" "${MOD_ID}-${{ matrix.minecraft_version }}.jar"
+          ls -la "${MOD_ID}-${{ matrix.minecraft_version }}.jar"
+      - name: upload jar artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jar-${{ matrix.minecraft_version }}
+          path: ${{ env.MOD_ID }}-${{ matrix.minecraft_version }}.jar
+
+  upload-release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: download all jars
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jar-*
+          path: dist
+          merge-multiple: true
+      - name: list dist
+        env:
+          MOD_ID: ${{ env.MOD_ID }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/"${MOD_ID}"-*.jar)
+          [[ ${#files[@]} -gt 0 ]] || { echo "No dist/${MOD_ID}-*.jar after download" >&2; exit 1; }
           ls -la dist/
       - name: upload jars to current GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MOD_ID: ${{ env.MOD_ID }}
         run: |
           set -euo pipefail
           tag="${{ github.event.release.tag_name }}"
