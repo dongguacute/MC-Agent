@@ -10,7 +10,7 @@ import net.minecraft.server.level.ServerPlayer;
  */
 final class AgentMessaging {
     static void sendToMainThread(ServerPlayer player, MutableComponent msg) {
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.createCommandSourceStack().getServer();
         if (server == null) {
             return;
         }

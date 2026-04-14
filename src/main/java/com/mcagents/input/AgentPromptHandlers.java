@@ -27,7 +27,7 @@ import java.util.regex.Matcher;
 final class AgentPromptHandlers {
     static String buildRuntimeSystemPrompt(ServerPlayer player) {
         String basePrompt = AgentSanitize.getControlBotSystemPrompt();
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.createCommandSourceStack().getServer();
         if (server == null) {
             return basePrompt;
         }
@@ -249,7 +249,7 @@ final class AgentPromptHandlers {
         }
 
         boolean hasDirective = AgentSanitize.hasControlDirective(reply);
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.createCommandSourceStack().getServer();
         if (server != null) {
             server.execute(() -> Startbot.tryHandleAiDirective(player, reply));
         }
