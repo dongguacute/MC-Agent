@@ -81,6 +81,7 @@ Legacy paths may be migrated automatically (`agentsdata`, world `data/`, etc.) �
 | Command | Description |
 |---------|-------------|
 | `/agent ask <prompt>` | Send a prompt to the LLM with per-player conversation history. Supports **compound prompts** (multiple lines, or separators like `然后`, `；`, `+`, etc.) executed **sequentially**. |
+| `/agent <prompt>` | Same as `/agent ask <prompt>`. Literal subcommands (`search`, `new`, `record`, …) are matched first, so this only applies when the first token is not a reserved keyword. |
 | `/agent search <query>` | Fetch Minecraft Wiki excerpts (EN/zh) and ask the model to summarize. |
 | `/agent new` | Clear the current player’s conversation state. |
 | `/agent record <bot_name> <tag>` | Append a bot record. |
@@ -97,8 +98,9 @@ Legacy paths may be migrated automatically (`agentsdata`, world `data/`, etc.) �
 - **OpenAI-compatible chat** with **SSE streaming**, optional non-streaming fallback, and handling of `reasoning` / `thinking`-style fields where present.
 - **Per-player chat history** with rough token estimation and a **context usage bar** when max context is known.
 - **Minecraft Wiki integration** — MediaWiki API against **minecraft.wiki** and **zh.minecraft.wiki** (auto pick by Latin vs CJK in the query; fallback to the other wiki if needed).
-- **Knowledge-style `/agent ask`** — Heuristic detection of wiki-style questions; optional AI keyword line `WIKI_QUERY: …`, then excerpt injection before answering.
-- **Follow-up wiki passes** — Assistant may emit lines like `[MC_WIKI_SEARCH] <query>`; the mod strips them from stored history and can chain supplemental wiki calls (depth capped).
+- **Knowledge-style `/agent ask`** — For wiki-like questions, the server runs a **keyword-extraction** call (`WIKI_QUERY: …`), **searches** Minecraft Wiki, injects excerpts, then the model answers **once** from that context (no extra “answer first, wiki supplement” round-trip from the server).
+- **`[MC_WIKI_SEARCH]` lines** — If the model outputs them, they are stripped from chat display and from committed history; the server does **not** enqueue chained wiki follow-up requests.
+- **Compound prompts** — “Conversation complete” and **context usage** messages are shown **once**, after the **last** sub-prompt finishes.
 - **Carpet bot control** — If the model outputs lines such as `[CONTROL_BOT] join <tag_or_name>` or `[CONTROL_BOT] leave …`, the server parses them and runs Carpet `player` subcommands (`rejoin` / `kill`), with **rate limits** and **cross-player conflict avoidance** for the same bot name. Targets resolve by **tag** from `agent_records.json` or direct **bot name** (3–16 chars, `[A-Za-z0-9_]`).
 - **Sanitization** — Control directives and wiki directive lines are hidden from normal displayed text; prompt-leak patterns are reduced for “thinking” streams.
 
